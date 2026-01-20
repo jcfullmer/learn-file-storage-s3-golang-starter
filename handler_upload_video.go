@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -70,20 +73,36 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	tempFile, err := os.CreateTemp("", "tubely-upload.mp4")
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error saving file", err)
+		return
 	}
 	defer os.Remove(tempFile.Name())
 	defer tempFile.Close()
 
 	io.Copy(tempFile, file)
+	ratio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error getting aspect ratio", err)
+		return
+	}
+
 	tempFile.Seek(0, io.SeekStart)
 
 	randFN := make([]byte, 32)
 	rand.Read(randFN)
 	randFNString := base64.RawURLEncoding.EncodeToString(randFN) + ".mp4"
+	var S3FileName string
+	switch ratio {
+	case "16:9":
+		S3FileName = "landscape/" + randFNString
+	case "9:16":
+		S3FileName = "portrait/" + randFNString
+	default:
+		S3FileName = "other/" + randFNString
+	}
 
 	s3Obj := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
-		Key:         &randFNString,
+		Key:         &S3FileName,
 		Body:        tempFile,
 		ContentType: &mediaType,
 	}
@@ -92,11 +111,49 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "error uploading to aws", err)
 		return
 	}
-	FileURL := fmt.Sprintf("https://%v.s3.%v.amazonaws.com/%v", cfg.s3Bucket, cfg.s3Region, randFNString)
+	FileURL := fmt.Sprintf("https://%v.s3.%v.amazonaws.com/%v", cfg.s3Bucket, cfg.s3Region, S3FileName)
 	dbVideo.VideoURL = &FileURL
 	err = cfg.db.UpdateVideo(dbVideo)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error writing to databse", err)
 	}
+
+}
+
+func getVideoAspectRatio(filepath string) (string, error) {
+	type ffprobeRes struct {
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}
+
+	args := []string{
+		"-v", "error",
+		"-print_format", "json",
+		"-show_streams", filepath,
+	}
+	cmd := exec.Command("ffprobe", args...)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	if err != nil {
+		return "", err
+	}
+	ffprobeR := ffprobeRes{}
+	if err = json.Unmarshal(out.Bytes(), &ffprobeR); err != nil {
+		return "", err
+	}
+	width, height := ffprobeR.Streams[0].Width, ffprobeR.Streams[0].Height
+	wDh := float64(width) / float64(height)
+	var Ratio string
+	if (wDh - 0.56) < 0.25 {
+		Ratio = "9:16"
+	} else if (wDh - 1.77) < 0.25 {
+		Ratio = "16:9"
+	} else {
+		Ratio = "other"
+	}
+	return Ratio, nil
 
 }
