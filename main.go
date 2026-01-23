@@ -24,6 +24,7 @@ type apiConfig struct {
 	s3CfDistribution string
 	port             string
 	s3Client         *s3.Client
+	CloudFrontURL    string
 }
 
 func main() {
@@ -79,6 +80,11 @@ func main() {
 		log.Fatal("PORT environment variable is not set")
 	}
 
+	CloudFrontURL := os.Getenv("CLOUDFRONT_URL")
+	if CloudFrontURL == "" {
+		log.Fatal("Cloud Front URL environment variable is not set")
+	}
+
 	aws, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(s3Region))
 	if err != nil {
 		log.Fatal("Error Loading AWS Config")
@@ -96,6 +102,7 @@ func main() {
 		s3CfDistribution: s3CfDistribution,
 		port:             port,
 		s3Client:         awsClient,
+		CloudFrontURL:    CloudFrontURL,
 	}
 
 	err = cfg.ensureAssetsDir()

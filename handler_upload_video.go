@@ -108,6 +108,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	processedFile, err := os.Open(processedVideo)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error opening processed file", err)
+		return
 	}
 	defer processedFile.Close()
 
@@ -122,11 +123,12 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "error uploading to aws", err)
 		return
 	}
-	FileURL := fmt.Sprintf("https://%v.s3.%v.amazonaws.com/%v", cfg.s3Bucket, cfg.s3Region, S3FileName)
+	FileURL := fmt.Sprintf("%v/%v", cfg.CloudFrontURL, S3FileName)
 	dbVideo.VideoURL = &FileURL
 	err = cfg.db.UpdateVideo(dbVideo)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error writing to databse", err)
+		return
 	}
 
 }
